@@ -39,6 +39,14 @@
             document.getElementById('auth-view').style.display = 'none';
         }
 
+        // URLを生成するヘルパー関数
+        function getBaseUrl(hostStr) {
+            const isTunnel = hostStr.includes('lhr.');
+            const protocol = isTunnel ? 'https://' : 'http://';
+            // バックエンドですでにポートが含まれているか、トンネルの標準ポートなのでそのまま結合するだけ
+            return `${protocol}${hostStr}`;
+        }
+
         async function register() {
             const btn = document.getElementById('reg-btn');
             btn.disabled = true;
@@ -55,10 +63,10 @@
                 const registration = await navigator.serviceWorker.ready;
 
                 // 3. VAPID 公開鍵を取得
-                const protocol = paramHost.includes('lhr.life') ? 'https://' : 'http://';
-                const baseUrl = `${protocol}${paramHost}${paramHost.includes(':') ? '' : ':8080'}`;
+                const baseUrl = getBaseUrl(paramHost);
                 
                 const keyRes = await fetch(`${baseUrl}/api/vapid_public_key`);
+                if (!keyRes.ok) throw new Error('VAPIDキーの取得に失敗しました');
                 const { public_key } = await keyRes.json();
 
                 // 4. プッシュ購読
@@ -81,7 +89,7 @@
                     localStorage.setItem('shinobi_pc_host', paramHost);
                     localStorage.setItem('shinobi_auth_key', paramKey);
                     alert('プッシュ通知の登録が完了しました。');
-                    window.location.href = window.location.pathname;
+                    window.location.href = window.location.pathname; // パラメータを消してリロード
                 } else {
                     alert('登録に失敗しました。');
                 }
@@ -107,8 +115,7 @@
             btn.disabled = true;
             status.innerText = "通信中...";
 
-            const protocol = host.includes('lhr.life') ? 'https://' : 'http://';
-            const targetUrl = `${protocol}${host}${host.includes(':') ? '' : ':8080'}/api/auth`;
+            const targetUrl = `${getBaseUrl(host)}/api/auth`;
 
             try {
                 const res = await fetch(targetUrl, {
@@ -142,7 +149,9 @@
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('sw.js');
+                navigator.serviceWorker.register('sw.js').catch(err => {
+                    console.error('Service Worker registration failed:', err);
+                });
             });
         }
     </script>
