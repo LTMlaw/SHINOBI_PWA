@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHINOBI AUTH</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        body { background: #000; color: #00FF41; font-family: 'Consolas', monospace; text-align: center; padding: 20px; }
+        .container { max-width: 400px; margin: auto; border: 1px solid #FF003C; padding: 20px; border-radius: 10px; }
+        h1 { color: #FF003C; font-size: 24px; }
+        button { background: #FF003C; color: #fff; border: none; padding: 20px 40px; font-size: 20px; border-radius: 10px; cursor: pointer; width: 100%; margin-top: 20px; font-weight: bold; }
+        button:disabled { background: #333; color: #666; cursor: not-allowed; }
+        .status { margin-top: 20px; font-size: 14px; color: #888; }
+        .setup-msg { color: #FFB347; margin-bottom: 20px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SHINOBI ACCESS</h1>
+        <div id="setup-view" style="display: none;">
+            <p class="setup-msg">新しいPCが検出されました。<br>プッシュ通知を有効にして登録しますか？</p>
+            <button id="reg-btn" onclick="register()">通知を許可して登録</button>
+        </div>
+        <div id="auth-view">
+            <p>プッシュ通知から解錠できます。<br>または下のボタンを使用してください。</p>
+            <button id="auth-btn" onclick="authenticate()">今すぐ解錠許可</button>
+            <div id="status" class="status">待機中...</div>
+        </div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const paramHost = urlParams.get('host');
+        const paramKey = urlParams.get('key');
+
+        if (paramHost && paramKey) {
+            document.getElementById('setup-view').style.display = 'block';
+            document.getElementById('auth-view').style.display = 'none';
+        }
+
+        async function register() {
+            const btn = document.getElementById('reg-btn');
+            btn.disabled = true;
+            
+            try {
+                // 1. 通知許可
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') {
+                    alert('通知を許可しないとプッシュ認証は使えません。');
+                    return;
+                }
+
+                // 2. Service Worker 取得
+                const registration = await navigator.serviceWorker.ready;
+
+                // 3. VAPID 公開鍵を取得
+                const protocol = paramHost.includes('lhr.life') ? 'https://' : 'http://';
+                const baseUrl = `${protocol}${paramHost}${paramHost.includes(':') ? '' : ':8080'}`;
+                
+                const keyRes = await fetch(`${baseUrl}/api/vapid_public_key`);
+                const { public_key } = await keyRes.json();
+
+                // 4. プッシュ購読
+                const subscription = await registration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(public_key)
+                });
+
+                // 5. サーバーへ登録
+                const subRes = await fetch(`${baseUrl}/api/subscribe`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        key: paramKey,
+                        subscription: subscription
+                    })
+                });
+
+                if (subRes.ok) {
+                    localStorage.setItem('shinobi_pc_host', paramHost);
+                    localStorage.setItem('shinobi_auth_key', paramKey);
+                    alert('プッシュ通知の登録が完了しました。');
+                    window.location.href = window.location.pathname;
+                } else {
+                    alert('登録に失敗しました。');
+                }
+            } catch (e) {
+                console.error(e);
+                alert('エラー: ' + e.message);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function authenticate() {
+            const host = localStorage.getItem('shinobi_pc_host');
+            const key = localStorage.getItem('shinobi_auth_key');
+            const status = document.getElementById('status');
+            const btn = document.getElementById('auth-btn');
+
+            if (!host || !key) {
+                status.innerText = "エラー: 未登録です。";
+                return;
+            }
+
+            btn.disabled = true;
+            status.innerText = "通信中...";
+
+            const protocol = host.includes('lhr.life') ? 'https://' : 'http://';
+            const targetUrl = `${protocol}${host}${host.includes(':') ? '' : ':8080'}/api/auth`;
+
+            try {
+                const res = await fetch(targetUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: key, action: 'unlock' })
+                });
+                if (res.ok) {
+                    status.innerText = "認証成功！";
+                    status.style.color = "#00FF41";
+                } else {
+                    status.innerText = "認証失敗。";
+                }
+            } catch (e) {
+                status.innerText = "接続失敗。";
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+            return outputArray;
+        }
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js');
+            });
+        }
+    </script>
+</body>
+</html>
