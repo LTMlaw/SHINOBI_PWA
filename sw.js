@@ -25,7 +25,7 @@ self.addEventListener('notificationclick', event => {
     const host = localStorage.getItem('shinobi_pc_host');
     if (!host) return;
 
-    const protocol = host.includes('lhr.life') ? 'https://' : 'http://';
+    const protocol = host.includes('ngrok') || host.includes('lhr.life') ? 'https://' : 'http://';
     const targetUrl = `${protocol}${host}${host.includes(':') ? '' : ':8080'}/api/auth`;
 
     event.waitUntil(
@@ -36,6 +36,8 @@ self.addEventListener('notificationclick', event => {
           key: authData.key,
           action: action
         })
+      }).catch(error => {
+        console.error('Service Worker auth error:', error);
       })
     );
   }
