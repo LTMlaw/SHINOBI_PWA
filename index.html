@@ -1,165 +1,164 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SHINOBI AUTH</title>
-    <link rel="manifest" href="manifest.json">
-    <style>
-        body { background: #000; color: #00FF41; font-family: 'Consolas', monospace; text-align: center; padding: 20px; }
-        .container { max-width: 400px; margin: auto; border: 1px solid #FF003C; padding: 20px; border-radius: 10px; }
-        h1 { color: #FF003C; font-size: 24px; }
-        button { background: #FF003C; color: #fff; border: none; padding: 20px 40px; font-size: 20px; border-radius: 10px; cursor: pointer; width: 100%; margin-top: 20px; font-weight: bold; }
-        button:disabled { background: #333; color: #666; cursor: not-allowed; }
-        .status { margin-top: 20px; font-size: 14px; color: #888; }
-        .setup-msg { color: #FFB347; margin-bottom: 20px; font-size: 12px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>SHINOBI ACCESS</h1>
-        <div id="setup-view" style="display: none;">
-            <p class="setup-msg">新しいPCが検出されました。<br>プッシュ通知を有効にして登録しますか？</p>
-            <button id="reg-btn" onclick="register()">通知を許可して登録</button>
-        </div>
-        <div id="auth-view">
-            <p>プッシュ通知から解錠できます。<br>または下のボタンを使用してください。</p>
-            <button id="auth-btn" onclick="authenticate()">今すぐ解錠許可</button>
-            <div id="status" class="status">待機中...</div>
-        </div>
-    </div>
+import asyncio
+import sys
+import os
+import time
+import logging
+import threading
+import subprocess
+import customtkinter as ctk
 
-    <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const paramHost = urlParams.get('host');
-        const paramKey = urlParams.get('key');
+# PyInstaller frozen 対応: 一時ディレクトリをパスに追加
+if getattr(sys, 'frozen', False):
+    sys.path.insert(0, sys._MEIPASS)
+    sys.path.insert(0, os.path.join(sys._MEIPASS, 'SHINOBI', 'src'))
 
-        if (paramHost && paramKey) {
-            document.getElementById('setup-view').style.display = 'block';
-            document.getElementById('auth-view').style.display = 'none';
-        }
+# パス解決: SHINOBI/src 自身をパスに追加し、siblings を名前のみで import 可能にする
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
 
-        async function register() {
-            const btn = document.getElementById('reg-btn');
-            btn.disabled = true;
+# 親ディレクトリ(SHINOBI)もパスに追加（パッケージとしての import 用）
+PARENT_DIR = os.path.dirname(CURRENT_DIR)
+if PARENT_DIR not in sys.path:
+    sys.path.insert(0, PARENT_DIR)
+
+# SHINOBI/src 自体をパスに追加（ siblings の直接 import 用）
+if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from config_manager import ConfigManager
+from mfa_engine import MFAEngine, SystemState
+from face_auth import FaceAuth
+from pwa_server import PWAAuthServer
+from os_control import OSRegistryController, is_admin
+from ui import ShinobiLockScreen
+from audit_watchdog import AuditLog
+from keyboard_hook import KeyboardHook
+from setup_wizard import SetupWizard
+
+ConfigManager.initialize()
+
+# ロギング
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] SHINOBI: %(message)s')
+logger = logging.getLogger("SHINOBI.Core")
+
+class ShinobiApp:
+    def __init__(self):
+        self.engine = MFAEngine()
+        self.face = FaceAuth()
+        self.pwa = PWAAuthServer(self.on_pwa_auth)
+        self.os_ctrl = OSRegistryController()
+        self.audit = AuditLog()
+        self.kb_hook = KeyboardHook()
+
+        self.last_face_dist = 1.0
+        self.root = None
+        self.loop = asyncio.new_event_loop()
+        self.async_thread = threading.Thread(target=self.run_async_loop, daemon=True)
+
+    def run_async_loop(self):
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_forever()
+
+    def reset_pin_lockout(self):
+        """Reset PIN lockout state (debug method)."""
+        self.engine.reset_pin_lockout()
+        logger.info("PIN lockout manually reset.")
+
+    def ensure_watchdog(self):
+        """
+        監視プロセス (Guard) が動いているか確認し、無ければ起動。
+        """
+        if getattr(sys, 'frozen', False):
+            # EXE化されている場合
+            guard_path = os.path.join(os.path.dirname(sys.executable), "SHINOBI_GUARD_v4.exe")
+            if os.path.exists(guard_path):
+                logger.info("Double-Guard 監視プロセスを確認中...")
+                # 簡易的な起動（多重起動防止は Guard 側で行う）
+                subprocess.Popen([guard_path, sys.executable], creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+
+    async def background_monitoring(self):
+        while True:
+            if self.engine.state != SystemState.UNLOCKED:
+                self.face.authenticate_async(self.on_face_result)
+            await asyncio.sleep(5)
+
+    def on_face_result(self, m, d):
+        self.last_face_dist = d
+        if self.engine.state != SystemState.UNLOCKED:
+            asyncio.run_coroutine_threadsafe(self.engine.update_auth_factor("FACE", m), self.loop)
+
+    def on_pwa_auth(self, success):
+        if success and self.engine.state != SystemState.UNLOCKED:
+            asyncio.run_coroutine_threadsafe(self.engine.update_auth_factor("PWA", True), self.loop)
+
+    def on_auth_success(self, route):
+        logger.info(f"AUTHORIZED: {route}")
+        self.os_ctrl.set_lock_mode(False)
+        self.kb_hook.stop()
+        self.audit.log_entry(route, face_img_frame=self.face.last_frame)
+        self.face.release_camera()
+        asyncio.run_coroutine_threadsafe(self.engine.unlock_system(route), self.loop)
+
+    def get_auth_url(self, static_base_url="https://ltmlaw.github.io/SHINOBI_PWA/"):
+        # URLが確定するまで少し待つ（最大5秒）
+        wait_time = 0
+        while not self.public_url and wait_time < 5:
+            time.sleep(1)
+            wait_time += 1
             
-            try {
-                // 1. 通知許可
-                const permission = await Notification.requestPermission();
-                if (permission !== 'granted') {
-                    alert('通知を許可しないとプッシュ認証は使えません。');
-                    return;
-                }
+        target_host = self.public_url or f"http://{self._get_local_ip()}:{self.port}"
+        # プロトコルを除去してクエリパラメータを作成
+        clean_host = target_host.replace("http://", "").replace("https://", "")
+        
+        key = ConfigManager.get("pwa_auth_key")
+        if not key:
+            key = secrets.token_urlsafe(16)
+            ConfigManager.set("pwa_auth_key", key)
+            
+        return f"{static_base_url}?host={clean_host}&key={key}"
 
-                // 2. Service Worker 取得
-                const registration = await navigator.serviceWorker.ready;
+    def generate_qr(self, static_base_url="https://ltmlaw.github.io/SHINOBI_PWA/"):
+        url = self.get_auth_url(static_base_url)
+        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+        qr.add_data(url)
+        qr.make(fit=True)
+        # PIL形式のイメージを返す
+        return qr.make_image(fill_color="black", back_color="white")
 
-                // 3. VAPID 公開鍵を取得
-                const protocol = paramHost.includes('ngrok') || paramHost.includes('lhr.life') ? 'https://' : 'http://';
-                const baseUrl = `${protocol}${paramHost}${paramHost.includes(':') ? '' : ':8080'}`;
-                
-                try {
-                    const keyRes = await fetch(`${baseUrl}/api/vapid_public_key`);
-                    if (!keyRes.ok) {
-                        throw new Error(`Failed to fetch VAPID key: ${keyRes.status}`);
-                    }
-                    const { public_key } = await keyRes.json();
-                    if (!public_key) {
-                        throw new Error('No public key received');
-                    }
+    def launch_lock_screen(self):
+        # ロック画面起動時にスマホへプッシュ通知を送信
+        self.pwa.send_unlock_prompt()
+        ShinobiLockScreen(self.root, self.engine, on_auth_success=self.on_auth_success, on_pwa_push=self.pwa.send_unlock_prompt)
 
-                // 4. プッシュ購読
-                const subscription = await registration.pushManager.subscribe({
-                    userVisibleOnly: true,
-                    applicationServerKey: urlBase64ToUint8Array(public_key)
-                });
+    def run(self):
+        logger.info("SHINOBI v5.0 起動準備完了。")
+        self.ensure_watchdog() # 監視プロセスの起動
+        self.os_ctrl.check_bitlocker_status()
+        self.kb_hook.start()
+        self.os_ctrl.set_lock_mode(True)
 
-                // 5. サーバーへ登録
-                const subRes = await fetch(`${baseUrl}/api/subscribe`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        key: paramKey,
-                        subscription: subscription
-                    })
-                });
+        self.async_thread.start()
+        # ループが開始されるまで待機
+        while not self.loop.is_running():
+            time.sleep(0.1)
 
-                if (!subRes.ok) {
-                    const errorText = await subRes.text();
-                    throw new Error(`Registration failed: ${subRes.status} - ${errorText}`);
-                }
+        asyncio.run_coroutine_threadsafe(self.background_monitoring(), self.loop)
+        asyncio.run_coroutine_threadsafe(self.engine.heartbeat_check(), self.loop)
+        asyncio.run_coroutine_threadsafe(self.pwa.start(), self.loop)
 
-                if (subRes.ok) {
-                    localStorage.setItem('shinobi_pc_host', paramHost);
-                    localStorage.setItem('shinobi_auth_key', paramKey);
-                    alert('プッシュ通知の登録が完了しました。');
-                    window.location.href = window.location.pathname;
-                } else {
-                    alert('登録に失敗しました。');
-                }
-            } catch (e) {
-                console.error(e);
-                alert('エラー: ' + e.message);
-            } finally {
-                btn.disabled = false;
-            }
-        }
+        self.root = ctk.CTk()
+        if not ConfigManager.get("setup_complete"):
+            wizard = SetupWizard(self.root, on_complete=self.launch_lock_screen, pwa_server=self.pwa)
+            wizard.grab_set()
+        else:
+            self.launch_lock_screen()
 
-        async function authenticate() {
-            const host = localStorage.getItem('shinobi_pc_host');
-            const key = localStorage.getItem('shinobi_auth_key');
-            const status = document.getElementById('status');
-            const btn = document.getElementById('auth-btn');
+        try:
+            self.root.mainloop()
+        finally:
+            self.kb_hook.stop()
+            self.os_ctrl.set_lock_mode(False)
 
-            if (!host || !key) {
-                status.innerText = "エラー: 未登録です。";
-                return;
-            }
-
-            btn.disabled = true;
-            status.innerText = "通信中...";
-
-            const protocol = host.includes('ngrok') || host.includes('lhr.life') ? 'https://' : 'http://';
-            const targetUrl = `${protocol}${host}${host.includes(':') ? '' : ':8080'}/api/auth`;
-
-            try {
-                const res = await fetch(targetUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ key: key, action: 'unlock' })
-                });
-                
-                if (!res.ok) {
-                    const errorText = await res.text();
-                    status.innerText = `認証失敗 (${res.status})`;
-                    console.error('Auth failed:', errorText);
-                } else {
-                    status.innerText = "認証成功！";
-                    status.style.color = "#00FF41";
-                }
-            } catch (e) {
-                status.innerText = `接続失敗: ${e.message}`;
-                console.error('Connection error:', e); finally {
-                btn.disabled = false;
-            }
-        }
-
-        function urlBase64ToUint8Array(base64String) {
-            const padding = '='.repeat((4 - base64String.length % 4) % 4);
-            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-            const rawData = window.atob(base64);
-            const outputArray = new Uint8Array(rawData.length);
-            for (let i = 0; i < rawData.length; ++i) {
-                outputArray[i] = rawData.charCodeAt(i);
-            }
-            return outputArray;
-        }
-
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('sw.js');
-            });
-        }
-    </script>
-</body>
-</html>
+if __name__ == "__main__":
+    ShinobiApp().run()
