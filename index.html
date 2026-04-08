@@ -39,7 +39,24 @@
             document.getElementById('auth-view').style.display = 'none';
         }
 
-        async function register() {
+        
+        async function authenticate() {
+            const host = localStorage.getItem('shinobi_pc_host');
+            const key = localStorage.getItem('shinobi_auth_key');
+            const status = document.getElementById('status');
+            const btn = document.getElementById('auth-btn');
+
+            if (!host || !key) {
+                status.innerText = "エラー: 未登録です。";
+                return;
+            }
+
+            btn.disabled = true;
+            status.innerText = "通信中...";
+
+            const protocol = host.includes('ngrok') || host.includes('lhr.life') ? 'https://' : 'http://';
+            const targetUrl = `${protocol}${host}${host.includes(':') ? '' : ':8080'}/api/auth`;
+async function register() {
             const btn = document.getElementById('reg-btn');
             btn.disabled = true;
             
@@ -48,6 +65,7 @@
                 const permission = await Notification.requestPermission();
                 if (permission !== 'granted') {
                     alert('通知を許可しないとプッシュ認証は使えません。');
+                    btn.disabled = false;
                     return;
                 }
 
@@ -99,25 +117,7 @@
             } finally {
                 btn.disabled = false;
             }
-        }
-
-        async function authenticate() {
-            const host = localStorage.getItem('shinobi_pc_host');
-            const key = localStorage.getItem('shinobi_auth_key');
-            const status = document.getElementById('status');
-            const btn = document.getElementById('auth-btn');
-
-            if (!host || !key) {
-                status.innerText = "エラー: 未登録です。";
-                return;
-            }
-
-            btn.disabled = true;
-            status.innerText = "通信中...";
-
-            const protocol = host.includes('ngrok') || host.includes('lhr.life') ? 'https://' : 'http://';
-            const targetUrl = `${protocol}${host}${host.includes(':') ? '' : ':8080'}/api/auth`;
-
+        } // ← register 関数の終わり
             try {
                 const res = await fetch(targetUrl, {
                     method: 'POST',
