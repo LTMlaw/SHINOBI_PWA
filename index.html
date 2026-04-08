@@ -39,24 +39,8 @@
             document.getElementById('auth-view').style.display = 'none';
         }
 
-        
-        async function authenticate() {
-            const host = localStorage.getItem('shinobi_pc_host');
-            const key = localStorage.getItem('shinobi_auth_key');
-            const status = document.getElementById('status');
-            const btn = document.getElementById('auth-btn');
-
-            if (!host || !key) {
-                status.innerText = "エラー: 未登録です。";
-                return;
-            }
-
-            btn.disabled = true;
-            status.innerText = "通信中...";
-
-            const protocol = host.includes('ngrok') || host.includes('lhr.life') ? 'https://' : 'http://';
-            const targetUrl = `${protocol}${host}${host.includes(':') ? '' : ':8080'}/api/auth`;
-async function register() {
+        // --- 登録処理 ---
+        async function register() {
             const btn = document.getElementById('reg-btn');
             btn.disabled = true;
             
@@ -117,7 +101,26 @@ async function register() {
             } finally {
                 btn.disabled = false;
             }
-        } // ← register 関数の終わり
+        }
+
+        // --- 認証処理 ---
+        async function authenticate() {
+            const host = localStorage.getItem('shinobi_pc_host');
+            const key = localStorage.getItem('shinobi_auth_key');
+            const status = document.getElementById('status');
+            const btn = document.getElementById('auth-btn');
+
+            if (!host || !key) {
+                status.innerText = "エラー: 未登録です。";
+                return;
+            }
+
+            btn.disabled = true;
+            status.innerText = "通信中...";
+
+            const protocol = host.includes('ngrok') || host.includes('lhr.life') ? 'https://' : 'http://';
+            const targetUrl = `${protocol}${host}${host.includes(':') ? '' : ':8080'}/api/auth`;
+
             try {
                 const res = await fetch(targetUrl, {
                     method: 'POST',
@@ -141,6 +144,7 @@ async function register() {
             }
         }
 
+        // --- ユーティリティ関数 ---
         function urlBase64ToUint8Array(base64String) {
             const padding = '='.repeat((4 - base64String.length % 4) % 4);
             const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -152,9 +156,11 @@ async function register() {
             return outputArray;
         }
 
+        // --- Service Worker 登録 ---
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('sw.js');
+                navigator.serviceWorker.register('sw.js')
+                    .catch(err => console.error('Service Worker registration failed:', err));
             });
         }
     </script>
