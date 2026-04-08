@@ -68,41 +68,38 @@
                         throw new Error('No public key received');
                     }
 
-                // 4. プッシュ購読
-                const subscription = await registration.pushManager.subscribe({
-                    userVisibleOnly: true,
-                    applicationServerKey: urlBase64ToUint8Array(public_key)
-                });
+                    // 4. プッシュ購読
+                    const subscription = await registration.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: urlBase64ToUint8Array(public_key)
+                    });
 
-                // 5. サーバーへ登録
-                const subRes = await fetch(`${baseUrl}/api/subscribe`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        key: paramKey,
-                        subscription: subscription
-                    })
-                });
+                    // 5. サーバーへ登録
+                    const subRes = await fetch(`${baseUrl}/api/subscribe`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            key: paramKey,
+                            subscription: subscription
+                        })
+                    });
 
-                if (!subRes.ok) {
-                    const errorText = await subRes.text();
-                    throw new Error(`Registration failed: ${subRes.status} - ${errorText}`);
-                }
+                    if (!subRes.ok) {
+                        const errorText = await subRes.text();
+                        throw new Error(`Registration failed: ${subRes.status} - ${errorText}`);
+                    }
 
-                if (subRes.ok) {
                     localStorage.setItem('shinobi_pc_host', paramHost);
                     localStorage.setItem('shinobi_auth_key', paramKey);
                     alert('プッシュ通知の登録が完了しました。');
                     window.location.href = window.location.pathname;
-                } else {
-                    alert('登録に失敗しました。');
+                    
+                } catch (e) {
+                    console.error(e);
+                    alert('エラー: ' + e.message);
+                } finally {
+                    btn.disabled = false;
                 }
-            } catch (e) {
-                console.error(e);
-                alert('エラー: ' + e.message);
-            } finally {
-                btn.disabled = false;
-            }
         }
 
         async function authenticate() {
