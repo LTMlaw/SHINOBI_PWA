@@ -58,8 +58,15 @@
                 const protocol = paramHost.includes('ngrok') || paramHost.includes('lhr.life') ? 'https://' : 'http://';
                 const baseUrl = `${protocol}${paramHost}${paramHost.includes(':') ? '' : ':8080'}`;
                 
-                const keyRes = await fetch(`${baseUrl}/api/vapid_public_key`);
-                const { public_key } = await keyRes.json();
+                try {
+                    const keyRes = await fetch(`${baseUrl}/api/vapid_public_key`);
+                    if (!keyRes.ok) {
+                        throw new Error(`Failed to fetch VAPID key: ${keyRes.status}`);
+                    }
+                    const { public_key } = await keyRes.json();
+                    if (!public_key) {
+                        throw new Error('No public key received');
+                    }
 
                 // 4. プッシュ購読
                 const subscription = await registration.pushManager.subscribe({
@@ -76,6 +83,11 @@
                         subscription: subscription
                     })
                 });
+
+                if (!subRes.ok) {
+                    const errorText = await subRes.text();
+                    throw new Error(`Registration failed: ${subRes.status} - ${errorText}`);
+                }
 
                 if (subRes.ok) {
                     localStorage.setItem('shinobi_pc_host', paramHost);
@@ -116,15 +128,18 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ key: key, action: 'unlock' })
                 });
-                if (res.ok) {
+                
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    status.innerText = `認証失敗 (${res.status})`;
+                    console.error('Auth failed:', errorText);
+                } else {
                     status.innerText = "認証成功！";
                     status.style.color = "#00FF41";
-                } else {
-                    status.innerText = "認証失敗。";
                 }
             } catch (e) {
-                status.innerText = "接続失敗。";
-            } finally {
+                status.innerText = `接続失敗: ${e.message}`;
+                console.error('Connection error:', e); finally {
                 btn.disabled = false;
             }
         }
