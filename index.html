@@ -58,48 +58,47 @@
                 const protocol = paramHost.includes('ngrok') || paramHost.includes('lhr.life') ? 'https://' : 'http://';
                 const baseUrl = `${protocol}${paramHost}${paramHost.includes(':') ? '' : ':8080'}`;
                 
-                try {
-                    const keyRes = await fetch(`${baseUrl}/api/vapid_public_key`);
-                    if (!keyRes.ok) {
-                        throw new Error(`Failed to fetch VAPID key: ${keyRes.status}`);
-                    }
-                    const { public_key } = await keyRes.json();
-                    if (!public_key) {
-                        throw new Error('No public key received');
-                    }
-
-                    // 4. プッシュ購読
-                    const subscription = await registration.pushManager.subscribe({
-                        userVisibleOnly: true,
-                        applicationServerKey: urlBase64ToUint8Array(public_key)
-                    });
-
-                    // 5. サーバーへ登録
-                    const subRes = await fetch(`${baseUrl}/api/subscribe`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            key: paramKey,
-                            subscription: subscription
-                        })
-                    });
-
-                    if (!subRes.ok) {
-                        const errorText = await subRes.text();
-                        throw new Error(`Registration failed: ${subRes.status} - ${errorText}`);
-                    }
-
-                    localStorage.setItem('shinobi_pc_host', paramHost);
-                    localStorage.setItem('shinobi_auth_key', paramKey);
-                    alert('プッシュ通知の登録が完了しました。');
-                    window.location.href = window.location.pathname;
-                    
-                } catch (e) {
-                    console.error(e);
-                    alert('エラー: ' + e.message);
-                } finally {
-                    btn.disabled = false;
+                const keyRes = await fetch(`${baseUrl}/api/vapid_public_key`);
+                if (!keyRes.ok) {
+                    throw new Error(`Failed to fetch VAPID key: ${keyRes.status}`);
                 }
+                const { public_key } = await keyRes.json();
+                if (!public_key) {
+                    throw new Error('No public key received');
+                }
+
+                // 4. プッシュ購読
+                const subscription = await registration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(public_key)
+                });
+
+                // 5. サーバーへ登録
+                const subRes = await fetch(`${baseUrl}/api/subscribe`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        key: paramKey,
+                        subscription: subscription
+                    })
+                });
+
+                if (!subRes.ok) {
+                    const errorText = await subRes.text();
+                    throw new Error(`Registration failed: ${subRes.status} - ${errorText}`);
+                }
+
+                localStorage.setItem('shinobi_pc_host', paramHost);
+                localStorage.setItem('shinobi_auth_key', paramKey);
+                alert('プッシュ通知の登録が完了しました。');
+                window.location.href = window.location.pathname;
+                    
+            } catch (e) {
+                console.error(e);
+                alert('エラー: ' + e.message);
+            } finally {
+                btn.disabled = false;
+            }
         }
 
         async function authenticate() {
